@@ -1,0 +1,31 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "A user of the Aviator bot system.",
+      "type": "object",
+      "properties": {
+        "phoneNumber": {
+          "type": "string",
+          "description": "The user's Zimbabwe phone number (unique identifier)."
+        },
+        "password": {
+          "type": "string",
+          "description": "The user's hashed or plain password for the bot."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When the account was created."
+        }
+      },
+      "required": ["phoneNumber", "password", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/users/{phoneNumber}": {
+      "schema": "User",
+      "description": "Collection of bot users indexed by phone number."
+    }
+  }
+}
