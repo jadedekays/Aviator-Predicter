@@ -1,5 +1,5 @@
 import { Card, CardContent } from "@/components/ui/card";
-import { SimulationResult } from "@/src/types";
+import { SimulationResult } from "@/types";
 import { Activity, ArrowDownRight, ArrowUpRight, Percent, Target } from "lucide-react";
 
 interface StatsDisplayProps {

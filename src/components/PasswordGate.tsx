@@ -5,22 +5,111 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { db } from "../firebase";
-import { doc, getDoc, setDoc, serverTimestamp } from "firebase/firestore";
+import { db, auth } from "../firebase";
+import { doc, getDoc, setDoc, serverTimestamp, increment } from "firebase/firestore";
+
+enum OperationType {
+  CREATE = 'create',
+  UPDATE = 'update',
+  DELETE = 'delete',
+  LIST = 'list',
+  GET = 'get',
+  WRITE = 'write',
+}
+
+interface FirestoreErrorInfo {
+  error: string;
+  operationType: OperationType;
+  path: string | null;
+  authInfo: {
+    userId: string | undefined;
+    email: string | null | undefined;
+    emailVerified: boolean | undefined;
+    isAnonymous: boolean | undefined;
+    providerInfo: {
+      providerId: string;
+      displayName: string | null;
+      email: string | null;
+      photoUrl: string | null;
+    }[];
+  }
+}
+
+function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
+  const errInfo: FirestoreErrorInfo = {
+    error: error instanceof Error ? error.message : String(error),
+    authInfo: {
+      userId: auth.currentUser?.uid,
+      email: auth.currentUser?.email,
+      emailVerified: auth.currentUser?.emailVerified,
+      isAnonymous: auth.currentUser?.isAnonymous,
+      providerInfo: auth.currentUser?.providerData.map(provider => ({
+        providerId: provider.providerId,
+        displayName: provider.displayName,
+        email: provider.email,
+        photoUrl: provider.photoURL
+      })) || []
+    },
+    operationType,
+    path
+  }
+  console.error('Firestore Error: ', JSON.stringify(errInfo));
+}
 
 interface PasswordGateProps {
-  onSuccess: (phone: string) => void;
+  onSuccess: (userData: any) => void;
 }
 
 export function PasswordGate({ onSuccess }: PasswordGateProps) {
   const [mode, setMode] = useState<'login' | 'register'>('login');
   const [phoneNumber, setPhoneNumber] = useState("");
+  const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [isVerifying, setIsVerifying] = useState(false);
+  const [isFetchingUser, setIsFetchingUser] = useState(false);
   const [attempts, setAttempts] = useState<Record<string, number>>({});
   const [lockouts, setLockouts] = useState<Record<string, number>>({});
+
+  const ACCESS_KEY = "JADEDEKAYS2009";
+
+  // Auto-fetch username when phone number is entered
+  React.useEffect(() => {
+    const fetchUsername = async () => {
+      if (phoneNumber.length === 9) {
+        setIsFetchingUser(true);
+        try {
+          const userRef = doc(db, "users", phoneNumber);
+          const userSnap = await getDoc(userRef);
+          if (userSnap.exists()) {
+            const data = userSnap.data();
+            if (data.username) {
+              setUsername(data.username);
+              if (mode === 'register') {
+                setError("Number already registered. Switching to login...");
+                setTimeout(() => {
+                  setMode('login');
+                  setError(null);
+                }, 1500);
+              }
+            }
+          } else {
+            if (mode === 'login') {
+              setUsername("");
+            }
+          }
+        } catch (err) {
+          console.error("Error fetching username:", err);
+        } finally {
+          setIsFetchingUser(false);
+        }
+      } else if (phoneNumber.length < 9 && mode === 'login') {
+        setUsername("");
+      }
+    };
+    fetchUsername();
+  }, [phoneNumber, mode]);
 
   const speak = (text: string) => {
     const message = new SpeechSynthesisUtterance(text);
@@ -30,7 +119,6 @@ export function PasswordGate({ onSuccess }: PasswordGateProps) {
   };
 
   const handleAction = async () => {
-    // Check if user is currently locked out
     const now = Date.now();
     if (lockouts[phoneNumber] && now < lockouts[phoneNumber]) {
       setError("try again after 1 week");
@@ -38,15 +126,20 @@ export function PasswordGate({ onSuccess }: PasswordGateProps) {
       return;
     }
 
-    // Basic Zimbabwe number validation (must be 9 digits)
     if (phoneNumber.length !== 9) {
       setError("wrong number");
       speak("wrong number");
       return;
     }
 
-    if (password.length < 4) {
-      setError("Invalid password length");
+    if (password !== ACCESS_KEY) {
+      setError("Wrong access key");
+      speak("Wrong access key");
+      return;
+    }
+
+    if (mode === 'register' && !username) {
+      setError("Username required");
       return;
     }
 
@@ -61,48 +154,74 @@ export function PasswordGate({ onSuccess }: PasswordGateProps) {
       if (mode === 'login') {
         if (userSnap.exists()) {
           const userData = userSnap.data();
-          if (userData.password === password) {
-            // Reset attempts on success
-            setAttempts(prev => ({ ...prev, [phoneNumber]: 0 }));
-            setSuccess("success");
-            speak("system online");
-            setTimeout(() => onSuccess(phoneNumber), 1000);
-          } else {
-            // Increment attempts
-            const currentAttempts = (attempts[phoneNumber] || 0) + 1;
-            setAttempts(prev => ({ ...prev, [phoneNumber]: currentAttempts }));
-
-            if (currentAttempts >= 3) {
-              // Lock out for 1 week (7 days * 24h * 60m * 60s * 1000ms)
-              const lockoutTime = now + (7 * 24 * 60 * 60 * 1000);
-              setLockouts(prev => ({ ...prev, [phoneNumber]: lockoutTime }));
-              setError("try again after 1 week");
-              speak("try again after 1 week");
-            } else {
-              setError("wrong password writen");
-              speak("no, wrong password");
-            }
+          
+          if (userData.isBlocked) {
+            setError("Access denied. You have been blocked.");
+            speak("Access denied. You have been blocked.");
             setIsVerifying(false);
+            return;
           }
+
+          const createdAt = userData.createdAt?.toDate?.() || new Date(userData.createdAt);
+          const twoMonthsAgo = new Date();
+          twoMonthsAgo.setMonth(twoMonthsAgo.getMonth() - 2);
+          
+          const isExpired = phoneNumber !== '779208037' && createdAt < twoMonthsAgo;
+          
+          if (isExpired) {
+            setError("Bot expired. Contact +263779208037 to renew.");
+            speak("Your access has expired");
+            setIsVerifying(false);
+            return;
+          }
+
+          // Increment stats
+          try {
+            await setDoc(doc(db, "stats", "global"), {
+              totalVisits: increment(1),
+              todayVisits: increment(1)
+            }, { merge: true });
+          } catch (err) {
+            console.error("Error updating stats:", err);
+          }
+
+          setSuccess("success");
+          speak("system online");
+          setTimeout(() => onSuccess(userData), 1000);
         } else {
           setError("Aint registered");
           speak("Aint registered");
           setIsVerifying(false);
         }
       } else {
-        // Register
         if (userSnap.exists()) {
           setError("Already registered. Please login.");
           setIsVerifying(false);
         } else {
-          await setDoc(userRef, {
+          const newUser = {
             phoneNumber,
+            username,
             password,
+            isApproved: false,
+            isPendingApproval: false,
             createdAt: serverTimestamp()
-          });
-          setSuccess("success");
-          speak("system online");
-          setTimeout(() => onSuccess(phoneNumber), 1000);
+          };
+          
+          const path = `users/${phoneNumber}`;
+          try {
+            await setDoc(userRef, newUser);
+            await setDoc(doc(db, "stats", "global"), {
+              userCount: increment(1)
+            }, { merge: true });
+
+            setSuccess("success");
+            speak("system online");
+            setTimeout(() => onSuccess(newUser), 1000);
+          } catch (err) {
+            handleFirestoreError(err, OperationType.CREATE, path);
+            setError("Connection error. Try again.");
+            setIsVerifying(false);
+          }
         }
       }
     } catch (err) {
@@ -113,118 +232,112 @@ export function PasswordGate({ onSuccess }: PasswordGateProps) {
   };
 
   return (
-    <div className="min-h-screen bg-background flex items-center justify-center p-4 font-sans selection:bg-primary/30">
+    <div className="min-h-screen bg-[#050505] flex items-center justify-center p-4 font-sans selection:bg-cyan-500/30">
       <div className="absolute inset-0 overflow-hidden pointer-events-none">
-        <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-primary/10 rounded-full blur-[120px] animate-pulse" />
-        <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-blue-500/10 rounded-full blur-[120px] animate-pulse delay-700" />
+        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[500px] h-[500px] bg-cyan-500/5 rounded-full blur-[120px]" />
       </div>
 
-      <Card className="max-w-md w-full border-primary/20 bg-card/50 backdrop-blur-xl shadow-2xl relative z-10">
-        <CardHeader className="text-center pb-2">
-          <div className="mx-auto w-16 h-16 bg-primary/10 rounded-full flex items-center justify-center mb-4 border border-primary/20">
-            <Lock className="h-8 w-8 text-primary" />
-          </div>
-          <CardTitle className="text-2xl font-black tracking-tight uppercase italic">
-            System <span className="text-primary">{mode === 'login' ? 'Login' : 'Register'}</span>
-          </CardTitle>
-          <div className="flex justify-center mt-2 gap-2">
-            <Badge variant="outline" className="text-[10px] uppercase tracking-widest border-primary/30 text-primary">
-              Secure Node
-            </Badge>
-            <Badge variant="outline" className="text-[10px] uppercase tracking-widest border-blue-500/30 text-blue-400">
-              v1.0.2
-            </Badge>
-          </div>
-        </CardHeader>
+      <div className="max-w-md w-full bg-[#0a0a0c] border border-cyan-500/20 rounded-[24px] p-8 shadow-[0_0_50px_rgba(0,255,255,0.05)] relative z-10">
+        <div className="text-center mb-10">
+          <h1 className="text-3xl font-black tracking-[0.2em] text-cyan-400 uppercase italic drop-shadow-[0_0_10px_rgba(34,211,238,0.5)]">
+            SYSTEM_ACCESS
+          </h1>
+        </div>
         
-        <CardContent className="space-y-4 pt-4">
+        <div className="space-y-6">
           <div className="space-y-2">
-            <label className="text-[10px] uppercase font-bold text-muted-foreground tracking-widest ml-1 flex items-center gap-1">
-              <Phone className="h-3 w-3" /> Zimbabwe Phone Number
+            <label className="text-[10px] uppercase font-black text-muted-foreground tracking-[0.2em] ml-1">
+              OPERATOR_ID
+            </label>
+            <div className="relative">
+              <Input 
+                placeholder="USERNAME" 
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                className="bg-black/40 border-cyan-500/30 focus:border-cyan-400 focus:ring-1 focus:ring-cyan-400/50 h-14 text-center font-mono tracking-widest text-cyan-50 rounded-xl"
+                disabled={isVerifying}
+              />
+              {isFetchingUser && (
+                <div className="absolute right-4 top-1/2 -translate-y-1/2">
+                  <Loader2 className="h-4 w-4 animate-spin text-cyan-500" />
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <label className="text-[10px] uppercase font-black text-muted-foreground tracking-[0.2em] ml-1">
+              PHONE_NUMBER
             </label>
             <div className="flex gap-2">
-              <div className="flex items-center px-3 bg-muted/50 border border-border/50 rounded-md text-sm font-mono text-muted-foreground">
+              <div className="flex items-center px-4 bg-black/40 border border-cyan-500/30 rounded-xl text-sm font-mono text-cyan-500/70">
                 +263
               </div>
               <Input 
                 placeholder="771234567" 
                 value={phoneNumber}
                 onChange={(e) => setPhoneNumber(e.target.value.replace(/\D/g, '').slice(0, 9))}
-                className="bg-background/50 flex-1 font-mono tracking-widest"
+                className="bg-black/40 border-cyan-500/30 focus:border-cyan-400 focus:ring-1 focus:ring-cyan-400/50 h-14 text-center font-mono tracking-widest text-cyan-50 rounded-xl flex-1"
                 disabled={isVerifying}
               />
             </div>
           </div>
 
           <div className="space-y-2">
-            <label className="text-[10px] uppercase font-bold text-muted-foreground tracking-widest ml-1 flex items-center gap-1">
-              <Key className="h-3 w-3" /> Bot Password
+            <label className="text-[10px] uppercase font-black text-muted-foreground tracking-[0.2em] ml-1">
+              ACCESS_KEY
             </label>
             <Input 
               type="password"
               placeholder="••••••••"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              className="bg-background/50 font-mono tracking-widest"
+              className="bg-black/40 border-cyan-500/30 focus:border-cyan-400 focus:ring-1 focus:ring-cyan-400/50 h-14 text-center font-mono tracking-widest text-cyan-50 rounded-xl"
               disabled={isVerifying}
             />
           </div>
 
           {error && (
-            <div className="p-2 rounded bg-red-500/10 border border-red-500/20 text-red-500 text-[10px] font-bold uppercase tracking-widest flex items-center gap-2">
-              <ShieldAlert className="h-3 w-3" />
+            <div className="p-3 rounded-xl bg-red-500/10 border border-red-500/20 text-red-500 text-[10px] font-black uppercase tracking-widest flex items-center justify-center gap-2 animate-shake">
+              <ShieldAlert className="h-4 w-4" />
               {error}
             </div>
           )}
 
           {success && (
-            <div className="p-2 rounded bg-green-500/10 border border-green-500/20 text-green-500 text-[10px] font-bold uppercase tracking-widest flex items-center gap-2">
-              <ArrowRight className="h-3 w-3" />
+            <div className="p-3 rounded-xl bg-cyan-500/10 border border-cyan-500/20 text-cyan-400 text-[10px] font-black uppercase tracking-widest flex items-center justify-center gap-2">
+              <ArrowRight className="h-4 w-4" />
               {success}
             </div>
           )}
 
-          <div className="p-3 rounded-lg bg-muted/30 border border-border/50">
-            <p className="text-[10px] text-muted-foreground uppercase tracking-widest font-bold mb-1">Access Protocol</p>
-            <p className="text-[10px] leading-relaxed opacity-70 italic">
-              Receive official access links only from <span className="text-primary font-bold">0779208037</span>. Unauthorized links are blocked.
-            </p>
-          </div>
-        </CardContent>
-
-        <CardFooter className="flex flex-col gap-3 pt-2">
           <Button 
             onClick={handleAction} 
             disabled={isVerifying || phoneNumber.length < 9 || !password}
-            className="w-full h-12 gap-2 bg-primary hover:bg-primary/90 text-primary-foreground font-black uppercase tracking-widest text-xs group"
+            className="w-full h-14 bg-cyan-500 hover:bg-cyan-400 text-black font-black uppercase tracking-[0.2em] text-xs rounded-xl shadow-[0_0_20px_rgba(6,182,212,0.3)] transition-all active:scale-[0.98]"
           >
             {isVerifying ? (
-              <>
-                <Loader2 className="h-4 w-4 animate-spin" />
-                Processing...
-              </>
+              <Loader2 className="h-5 w-5 animate-spin" />
             ) : (
-              <>
-                {mode === 'login' ? <LogIn className="h-4 w-4" /> : <UserPlus className="h-4 w-4" />}
-                {mode === 'login' ? 'Initialize System' : 'Create Account'}
-                <ArrowRight className="h-4 w-4 group-hover:translate-x-1 transition-transform" />
-              </>
+              'AUTHORIZE'
             )}
           </Button>
           
-          <button 
-            onClick={() => setMode(mode === 'login' ? 'register' : 'login')}
-            className="text-[10px] uppercase tracking-widest font-bold text-muted-foreground hover:text-primary transition-colors"
-            disabled={isVerifying}
-          >
-            {mode === 'login' ? "Don't have an account? Register" : "Already have an account? Login"}
-          </button>
-        </CardFooter>
-      </Card>
+          <div className="flex justify-center pt-2">
+            <button 
+              onClick={() => setMode(mode === 'login' ? 'register' : 'login')}
+              className="text-[10px] uppercase tracking-[0.2em] font-black text-muted-foreground hover:text-cyan-400 transition-colors"
+              disabled={isVerifying}
+            >
+              {mode === 'login' ? "REGISTER_NEW_OPERATOR" : "RETURN_TO_LOGIN"}
+            </button>
+          </div>
+        </div>
+      </div>
       
       <div className="fixed bottom-8 left-0 right-0 text-center">
-        <p className="text-[10px] uppercase tracking-widest text-muted-foreground font-bold opacity-50">
-          Crash Strategy Lab © 2026 | Secure Access Node
+        <p className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground font-black opacity-30">
+          CYBER_FLAW // NEURAL_LAB // v1.0.2
         </p>
       </div>
     </div>

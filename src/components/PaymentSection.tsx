@@ -1,12 +1,18 @@
 import * as React from "react";
 import { useState } from "react";
-import { CreditCard, ArrowRight, CheckCircle2, AlertCircle, DollarSign, Wallet } from "lucide-react";
+import { CreditCard, ArrowRight, CheckCircle2, AlertCircle, DollarSign, Wallet, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { db } from "../firebase";
+import { doc, updateDoc } from "firebase/firestore";
 
-export function PaymentSection() {
+interface PaymentSectionProps {
+  userPhone: string;
+}
+
+export function PaymentSection({ userPhone }: PaymentSectionProps) {
   const [step, setStep] = useState<'initial' | 'details'>('initial');
   const [currency, setCurrency] = useState<'USD' | 'ZIG'>('USD');
   const [amount, setAmount] = useState("5");
@@ -33,15 +39,25 @@ export function PaymentSection() {
     setIsProcessing(true);
     setPaymentError(null);
 
-    // Lead user straight to WhatsApp as requested
-    const message = encodeURIComponent(`Hello, I want to make a payment of ${currency} ${amount} for premium signals.`);
-    const whatsappUrl = `https://wa.me/263779208037?text=${message}`;
-    
-    setTimeout(() => {
+    try {
+      // Set pending status in Firestore
+      await updateDoc(doc(db, "users", userPhone), {
+        isPendingApproval: true
+      });
+
+      // Lead user straight to WhatsApp with approval link
+      const approvalLink = `${window.location.origin}?approve=${userPhone}`;
+      const message = encodeURIComponent(`Hello, I want to make a payment of ${currency} ${amount} for premium signals. My phone number is +263${userPhone}. Approve me here: ${approvalLink}`);
+      const whatsappUrl = `https://wa.me/263779208037?text=${message}`;
+      
       window.open(whatsappUrl, '_blank');
       setIsProcessing(false);
       setShowSuccess(true);
-    }, 1000);
+    } catch (err) {
+      console.error(err);
+      setPaymentError("Failed to initiate payment. Please try again.");
+      setIsProcessing(false);
+    }
   };
 
   if (showSuccess) {
@@ -190,25 +206,5 @@ export function PaymentSection() {
       </p>
     </div>
     </>
-  );
-}
-
-function ShieldCheck({ className }: { className?: string }) {
-  return (
-    <svg 
-      xmlns="http://www.w3.org/2000/svg" 
-      width="24" 
-      height="24" 
-      viewBox="0 0 24 24" 
-      fill="none" 
-      stroke="currentColor" 
-      strokeWidth="2" 
-      strokeLinecap="round" 
-      strokeLinejoin="round" 
-      className={className}
-    >
-      <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10" />
-      <path d="m9 12 2 2 4-4" />
-    </svg>
   );
 }

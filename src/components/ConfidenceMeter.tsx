@@ -15,9 +15,8 @@ export function ConfidenceMeter({ score }: ConfidenceMeterProps) {
   }, [score]);
 
   const getStatus = () => {
-    if (displayScore > 80) return { label: "High Confidence", color: "text-green-500", bar: "bg-green-500" };
-    if (displayScore > 50) return { label: "Moderate Signal", color: "text-yellow-500", bar: "bg-yellow-500" };
-    return { label: "Low Confidence", color: "text-red-500", bar: "bg-red-500" };
+    if (displayScore >= 70) return { label: "High Confidence", color: "text-green-500", bar: "bg-green-500" };
+    return { label: "Low Signal Strength", color: "text-red-500", bar: "bg-red-500" };
   };
 
   const status = getStatus();

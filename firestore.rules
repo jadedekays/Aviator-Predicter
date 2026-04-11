@@ -16,20 +16,36 @@ service cloud.firestore {
              data.createdAt is timestamp;
     }
 
+    function isCreator(phone) {
+      return phone == "779208037";
+    }
+
+    function isAdmin() {
+      return request.auth != null && 
+             (request.auth.token.email == "jadedekays@gmail.com" && request.auth.token.email_verified == true);
+    }
+
     // ===============================================================
     // Rules
     // ===============================================================
     
+    match /stats/{docId} {
+      allow read: if true;
+      allow write: if true; // Allow increments/decrements
+    }
+
+    match /visitors/{visitorId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
     match /users/{phoneNumber} {
-      // Allow anyone to check if a user exists or create a new one (registration)
-      // In a real app, we'd use Firebase Auth, but here we are using a custom phone+pass system
-      // stored in Firestore for simplicity as per user request.
       allow get: if true;
-      allow create: if isValidUser(request.resource.data) && request.resource.data.phoneNumber == phoneNumber;
+      allow list: if true;
       
-      // Only allow updates if they know the current password (handled in app logic)
-      // but for rules, we just ensure schema validity.
-      allow update: if isValidUser(request.resource.data);
+      allow create: if true;
+      
+      allow update: if true;
     }
 
     match /{path=**} {

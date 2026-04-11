@@ -3,7 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Slider } from "@/components/ui/slider";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { StrategyConfig, StrategyType } from "@/src/types";
+import { StrategyConfig, StrategyType } from "@/types";
 import { Play, RotateCcw, TrendingUp, Zap } from "lucide-react";
 
 interface StrategyControlsProps {

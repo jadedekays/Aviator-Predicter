@@ -1,7 +1,7 @@
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { Round } from "@/src/types";
+import { Round } from "@/types";
 import { History, PlusCircle } from "lucide-react";
 import { useState, FormEvent } from "react";
 

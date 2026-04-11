@@ -13,6 +13,18 @@
           "type": "string",
           "description": "The user's hashed or plain password for the bot."
         },
+        "username": {
+          "type": "string",
+          "description": "The user's chosen display name."
+        },
+        "isApproved": {
+          "type": "boolean",
+          "description": "Whether the user has paid and been approved by the creator."
+        },
+        "isPendingApproval": {
+          "type": "boolean",
+          "description": "Whether the user has requested approval after payment."
+        },
         "createdAt": {
           "type": "string",
           "format": "date-time",
@@ -20,12 +32,31 @@
         }
       },
       "required": ["phoneNumber", "password", "createdAt"]
+    },
+    "Stats": {
+      "title": "Stats",
+      "description": "Global application statistics.",
+      "type": "object",
+      "properties": {
+        "userCount": {
+          "type": "number",
+          "description": "Total number of registered users."
+        },
+        "activeUsers": {
+          "type": "number",
+          "description": "Number of users currently logged in."
+        }
+      }
     }
   },
   "firestore": {
     "/users/{phoneNumber}": {
       "schema": "User",
       "description": "Collection of bot users indexed by phone number."
+    },
+    "/stats/global": {
+      "schema": "Stats",
+      "description": "Global statistics document."
     }
   }
 }
